@@ -3,7 +3,7 @@ Image Router — R2 Edition (Zero-Latency)
 All images served from Cloudflare R2.
 
 Routes:
-    GET /api/images/thumbnail/{person_id}          → Proxy (small, ~10KB)
+    GET /api/images/thumbnail/{person_id}           → 302 → R2 (NO CACHE)
     GET /api/images/viewing/{ceremony}/{filename}   → 302 → R2 CDN
     GET /api/images/download/{ceremony}/{filename}  → Proxied stream + attachment
 """
@@ -22,9 +22,21 @@ router = APIRouter()
 _PROXY_VIEWING = os.getenv("PROXY_VIEWING", "false").lower() == "true"
 _WEBP_FALLBACK = os.getenv("WEBP_FALLBACK", "true").lower() == "true"
 
-_IMG_CACHE      = "public, max-age=604800, immutable"
+_IMG_CACHE      = "public, max-age=604800, immutable"  # photos: content-addressed filenames, safe to cache
 _REDIRECT_CACHE = "public, max-age=86400"
 _DL_CACHE       = "public, max-age=3600"
+
+# THUMBNAILS: strongest possible no-cache combo.
+# person_N.jpg maps to a different face in every client's bucket, and the
+# URL path is identical across clients (e.g. /api/images/thumbnail/48),
+# so browser memory/disk cache would happily reuse one client's face for
+# another client. no-store + no-cache + must-revalidate + Pragma + Expires
+# defeats every caching layer including Chrome's aggressive memory cache.
+_THUMB_NOCACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma":        "no-cache",
+    "Expires":       "0",
+}
 
 print(f"[images] PROXY_VIEWING={_PROXY_VIEWING}, WEBP_FALLBACK={_WEBP_FALLBACK}")
 
@@ -46,7 +58,7 @@ def get_client() -> httpx.AsyncClient:
 
 def _content_type(filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower()
-    ct = {
+    return {
         "jpg":  "image/jpeg",
         "jpeg": "image/jpeg",
         "png":  "image/png",
@@ -54,7 +66,6 @@ def _content_type(filename: str) -> str:
         "gif":  "image/gif",
         "avif": "image/avif",
     }.get(ext, "application/octet-stream")
-    return ct
 
 
 def _webp_variant(filename: str) -> str | None:
@@ -64,7 +75,7 @@ def _webp_variant(filename: str) -> str | None:
     return str(p.with_suffix(".webp"))
 
 
-async def _stream_r2(url: str, filename: str, attachment: bool = False) -> StreamingResponse:
+async def _stream_r2(url: str, filename: str, attachment: bool = False, extra_headers: dict | None = None) -> StreamingResponse:
     print(f"[images/_stream_r2] fetching from R2: {url}  attachment={attachment}")
     t0 = time.perf_counter()
     client = get_client()
@@ -95,6 +106,8 @@ async def _stream_r2(url: str, filename: str, attachment: bool = False) -> Strea
         "Vary": "Accept-Encoding",
         "Access-Control-Expose-Headers": "Content-Length",
     }
+    if extra_headers:
+        headers.update(extra_headers)
     if content_length:
         headers["Content-Length"] = content_length
     if attachment:
@@ -154,13 +167,23 @@ async def _redirect_or_proxy(url: str, filename: str) -> RedirectResponse | Stre
 
 
 # ── Thumbnail ──────────────────────────────────────────────────────────────────
+#
+# Now returns a 302 redirect directly to R2 (NOT a proxied stream).
+# The browser will cache the image under its final R2 URL, which contains
+# the per-client r2.dev subdomain — so two different clients never share a
+# cache entry. The 302 response itself carries no-store headers so the
+# redirect decision is always re-made on the current backend's R2_PUBLIC_URL.
 
 @router.get("/thumbnail/{person_id}")
 async def proxy_thumbnail(person_id: int):
     filename = f"person_{person_id}.jpg"
     url = r2_url("thumbnails", filename)
-    print(f"[images/thumbnail] person_id={person_id} → {url}")
-    return await _stream_r2(url, filename)
+    print(f"[images/thumbnail] person_id={person_id} → 302 to {url}")
+    return RedirectResponse(
+        url=url,
+        status_code=302,
+        headers=_THUMB_NOCACHE_HEADERS,
+    )
 
 
 # ── Viewing ───────────────────────────────────────────────────────────────────
