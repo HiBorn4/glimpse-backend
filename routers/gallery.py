@@ -21,12 +21,23 @@ def _extract_ceremony(photo: dict) -> str:
     return ""
 
 
+def _to_webp(filename: str) -> str:
+    """Force any image filename to .webp — all viewing/thumbnail files in R2 are webp."""
+    if not filename:
+        return filename
+    stem, _, ext = filename.rpartition(".")
+    if ext.lower() == "webp":
+        return filename
+    return f"{stem}.webp"
+
+
 def _viewing_filename(photo: dict) -> str:
-    return photo.get("filename", "")
+    """Return the webp viewing filename (R2 stores only webp for viewing)."""
+    return _to_webp(photo.get("filename", ""))
 
 
 def _build_urls(photo: dict) -> dict:
-    filename = _viewing_filename(photo)
+    filename = _viewing_filename(photo)  # already .webp
     ceremony = _extract_ceremony(photo)
     photo = dict(photo)
     if ceremony:

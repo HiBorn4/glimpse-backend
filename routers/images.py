@@ -20,7 +20,6 @@ from config import r2_url, r2_url_with_subfolder
 router = APIRouter()
 
 _PROXY_VIEWING = os.getenv("PROXY_VIEWING", "false").lower() == "true"
-_WEBP_FALLBACK = os.getenv("WEBP_FALLBACK", "true").lower() == "true"
 
 _IMG_CACHE      = "public, max-age=604800, immutable"  # photos: content-addressed filenames, safe to cache
 _REDIRECT_CACHE = "public, max-age=86400"
@@ -38,7 +37,7 @@ _THUMB_NOCACHE_HEADERS = {
     "Expires":       "0",
 }
 
-print(f"[images] PROXY_VIEWING={_PROXY_VIEWING}, WEBP_FALLBACK={_WEBP_FALLBACK}")
+print(f"[images] PROXY_VIEWING={_PROXY_VIEWING}")
 
 _client: httpx.AsyncClient | None = None
 
@@ -67,12 +66,6 @@ def _content_type(filename: str) -> str:
         "avif": "image/avif",
     }.get(ext, "application/octet-stream")
 
-
-def _webp_variant(filename: str) -> str | None:
-    p = PurePosixPath(filename)
-    if p.suffix.lower() == ".webp":
-        return None
-    return str(p.with_suffix(".webp"))
 
 
 async def _stream_r2(url: str, filename: str, attachment: bool = False, extra_headers: dict | None = None) -> StreamingResponse:
@@ -141,24 +134,8 @@ async def _redirect_or_proxy(url: str, filename: str) -> RedirectResponse | Stre
         print(f"[images/_redirect_or_proxy] PROXY_VIEWING=true → proxying {filename}")
         return await _stream_r2(url, filename)
 
-    if _WEBP_FALLBACK:
-        client = get_client()
-        try:
-            print(f"[images/_redirect_or_proxy] HEAD check: {url}")
-            head_resp = await client.head(url)
-            print(f"[images/_redirect_or_proxy] HEAD → {head_resp.status_code}")
-            if head_resp.status_code == 404:
-                webp = _webp_variant(filename)
-                if webp:
-                    webp_url = url.rsplit("/", 1)[0] + "/" + webp
-                    print(f"[images/_redirect_or_proxy] 404 on original, trying webp fallback: {webp_url}")
-                    url = webp_url
-                    filename = webp
-                else:
-                    print(f"[images/_redirect_or_proxy] 404 and no webp variant possible")
-        except httpx.RequestError as e:
-            print(f"[images/_redirect_or_proxy] HEAD request failed: {e} — falling through to redirect")
-
+    # All filenames are normalised to .webp by the gallery router before URLs are built,
+    # so no HEAD-check fallback is needed. Go straight to the redirect.
     print(f"[images/_redirect_or_proxy] → 302 redirect to {url}")
     return RedirectResponse(
         url=url, status_code=302,
@@ -176,7 +153,7 @@ async def _redirect_or_proxy(url: str, filename: str) -> RedirectResponse | Stre
 
 @router.get("/thumbnail/{person_id}")
 async def proxy_thumbnail(person_id: int):
-    filename = f"person_{person_id}.jpg"
+    filename = f"person_{person_id}.webp"
     url = r2_url("thumbnails", filename)
     print(f"[images/thumbnail] person_id={person_id} → 302 to {url}")
     return RedirectResponse(
