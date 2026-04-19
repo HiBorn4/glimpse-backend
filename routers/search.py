@@ -4,14 +4,15 @@ Face Search Router — Guest selfie → matching photos.
 import time
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Query
-from config import SEARCH_THRESHOLD, SEARCH_TOP_K
+from config import SEARCH_THRESHOLD, SEARCH_TOP_K, r2_url, r2_url_with_subfolder
 
 router = APIRouter()
 
 
 def _proxy_urls(photos_by_ceremony: dict) -> dict:
+    # Direct-to-R2 viewing URLs — no backend 302 round-trip.
     return {
-        ceremony: [f"/api/images/viewing/{ceremony}/{fn}" for fn in filenames]
+        ceremony: [r2_url_with_subfolder("viewing", ceremony, fn) for fn in filenames]
         for ceremony, filenames in photos_by_ceremony.items()
     }
 
@@ -24,10 +25,11 @@ def _photo_urls(photo: dict) -> dict:
 
     photo = dict(photo)
     if cer and cer != "all":
-        photo["viewing_url"]  = f"/api/images/viewing/{cer}/{fn}"
+        # viewing = direct R2; download = backend (needs attachment header)
+        photo["viewing_url"]  = r2_url_with_subfolder("viewing", cer, fn)
         photo["download_url"] = f"/api/images/download/{cer}/{fn}"
     else:
-        photo["viewing_url"]  = f"/api/images/viewing/{fn}"
+        photo["viewing_url"]  = r2_url("viewing", fn)
         photo["download_url"] = f"/api/images/download/{fn}"
     return photo
 

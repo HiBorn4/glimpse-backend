@@ -6,6 +6,7 @@ import time
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from cache import get_cache, get_photos_filtered
+from config import r2_url, r2_url_with_subfolder
 
 router = APIRouter()
 _API_CACHE = "private, no-cache"
@@ -40,11 +41,19 @@ def _build_urls(photo: dict) -> dict:
     filename = _viewing_filename(photo)  # already .webp
     ceremony = _extract_ceremony(photo)
     photo = dict(photo)
+
+    # viewing_url goes DIRECT to R2 — browser skips the backend 302 entirely.
+    # This used to be /api/images/viewing/... which then 302'd to R2; that
+    # cost one pointless round-trip per image. Now we hand out the final URL
+    # and let the CDN do its job.
     if ceremony:
-        photo["viewing_url"]  = f"/api/images/viewing/{ceremony}/{filename}"
+        photo["viewing_url"]  = r2_url_with_subfolder("viewing", ceremony, filename)
+        # download_url stays on the backend proxy because it needs to set
+        # Content-Disposition: attachment so the browser saves instead of
+        # navigating. R2 can't do that for public objects.
         photo["download_url"] = f"/api/images/download/{ceremony}/{filename}"
     else:
-        photo["viewing_url"]  = f"/api/images/viewing/{filename}"
+        photo["viewing_url"]  = r2_url("viewing", filename)
         photo["download_url"] = f"/api/images/download/{filename}"
     return photo
 
