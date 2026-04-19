@@ -28,8 +28,6 @@ print(f"  API_HOST    : {os.getenv('API_HOST', '0.0.0.0')}")
 print(f"  API_PORT    : {os.getenv('API_PORT', '8000')}")
 print(f"  ENV         : {os.getenv('ENV', 'dev')}")
 print(f"  R2_PUBLIC_URL  : {os.getenv('R2_PUBLIC_URL', '(NOT SET)')}")
-print(f"  R2_EVENT_PREFIX: {os.getenv('R2_EVENT_PREFIX', '(NOT SET)')}")
-print(f"  R2_BUCKET_NAME : {os.getenv('R2_BUCKET_NAME', '(NOT SET)')}")
 print(f"  FRONTEND_URL   : {os.getenv('FRONTEND_URL', 'http://localhost:3000')}")
 print(f"  USE_GPU        : {os.getenv('USE_GPU', 'false')}")
 print("=" * 60)
@@ -48,7 +46,6 @@ async def lifespan(app: FastAPI):
         print(f"[STARTUP] ✅ Classification loaded in {elapsed:.2f}s")
     else:
         print(f"[STARTUP] ❌ Classification FAILED after {elapsed:.2f}s")
-        print("[STARTUP]    → Check R2_PUBLIC_URL and R2_EVENT_PREFIX in your .env")
 
     # ── 2. Load face search engine ────────────────────────────────────────
     print("[STARTUP] Step 2/2 — Loading face search engine from R2…")
