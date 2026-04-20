@@ -1,6 +1,27 @@
 """
 Gallery Router — Instant responses with ETag + Cache-Control.
-All photo URLs resolve to R2 via the /api/images proxy.
+
+CHANGE (ultra-fast downloads):
+    download_url stays as a same-origin /api/images/download/... path,
+    but the images router now issues a 302 redirect to R2 instead of
+    proxy-streaming the bytes.
+
+    Why same-origin + 302 instead of a direct-to-R2 URL?
+      1. The frontend's <a download="filename.jpg"> attribute reliably
+         renames the saved file ONLY for same-origin URLs.  For
+         cross-origin URLs, the browser requires Content-Disposition
+         from the server — and R2's response-content-disposition query
+         param support has been unreliable historically.
+      2. A 302 costs ~200 bytes of Railway bandwidth per download.  The
+         actual image bytes flow from Cloudflare's nearest edge POP
+         straight to the user's disk.  Zero Railway egress on the payload.
+      3. The browser's <a download> click fires instantly; the 302 is
+         sub-20ms; the real bottleneck (bytes over the wire) runs at
+         full CDN speed with HTTP/2 or HTTP/3.
+
+    End result: clicking Download opens the save dialog in well under
+    a second, the browser shows its own progress bar, and the file
+    travels one hop from the nearest Cloudflare POP.  No blob buffering.
 """
 import time
 from typing import Optional
@@ -38,23 +59,21 @@ def _viewing_filename(photo: dict) -> str:
 
 
 def _build_urls(photo: dict) -> dict:
-    filename = _viewing_filename(photo)  # already .webp
+    original_filename = photo.get("filename", "")   # e.g. "DSC00120.jpg" — for downloads
+    viewing_filename  = _to_webp(original_filename) # e.g. "DSC00120.webp" — for viewing
     ceremony = _extract_ceremony(photo)
     photo = dict(photo)
 
     # viewing_url goes DIRECT to R2 — browser skips the backend 302 entirely.
-    # This used to be /api/images/viewing/... which then 302'd to R2; that
-    # cost one pointless round-trip per image. Now we hand out the final URL
-    # and let the CDN do its job.
+    # download_url stays same-origin so the frontend's <a download> attribute
+    # reliably controls the saved filename; the images router issues a 302
+    # to R2 on request, so the bytes still skip Railway.
     if ceremony:
-        photo["viewing_url"]  = r2_url_with_subfolder("viewing", ceremony, filename)
-        # download_url stays on the backend proxy because it needs to set
-        # Content-Disposition: attachment so the browser saves instead of
-        # navigating. R2 can't do that for public objects.
-        photo["download_url"] = f"/api/images/download/{ceremony}/{filename}"
+        photo["viewing_url"]  = r2_url_with_subfolder("viewing", ceremony, viewing_filename)
+        photo["download_url"] = f"/api/images/download/{ceremony}/{original_filename}"
     else:
-        photo["viewing_url"]  = r2_url("viewing", filename)
-        photo["download_url"] = f"/api/images/download/{filename}"
+        photo["viewing_url"]  = r2_url("viewing", viewing_filename)
+        photo["download_url"] = f"/api/images/download/{original_filename}"
     return photo
 
 
